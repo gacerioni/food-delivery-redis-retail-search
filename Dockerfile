@@ -32,6 +32,8 @@ RUN useradd --create-home --shell /bin/bash --uid 10001 app \
     && chown -R app:app /app
 USER app
 
+# Installed package lives under site-packages; templates/static stay at /app from COPY above.
+ENV DEMO_ASSET_ROOT=/app
 ENV API_PORT=8686
 
 EXPOSE 8686
