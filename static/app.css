@@ -456,6 +456,37 @@ button.danger {
   gap: 0.65rem;
 }
 
+.battlecard-metrics--primary {
+  margin-bottom: 0.35rem;
+}
+
+.battlecard-hint-split {
+  margin: 0 0 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.bc-metric--redis-hero {
+  grid-column: 1 / -1;
+  border-color: rgba(91, 141, 239, 0.5);
+  background: rgba(91, 141, 239, 0.14);
+}
+
+.bc-metric--redis-hero .bc-metric-val {
+  font-size: 1.65rem;
+  color: #b8d4ff;
+}
+
+.bc-metric--redis-hero .bc-metric-lab {
+  color: #c8dcf8;
+  font-size: 0.72rem;
+}
+
+.bc-metric--sub .bc-metric-val {
+  font-size: 0.98rem;
+  font-weight: 650;
+}
+
 .bc-metric {
   padding: 0.55rem 0.65rem;
   border-radius: var(--radius-md);
@@ -529,6 +560,12 @@ button.danger {
   flex-wrap: wrap;
   gap: 0.4rem;
   margin-bottom: 1rem;
+}
+
+.obs-chip--accent {
+  border-color: rgba(91, 141, 239, 0.45) !important;
+  background: rgba(91, 141, 239, 0.12) !important;
+  color: #d4e4ff !important;
 }
 
 .obs-chip {

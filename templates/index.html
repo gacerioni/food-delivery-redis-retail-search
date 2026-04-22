@@ -221,24 +221,30 @@
       " · " +
       geo +
       "</span></div></div>" +
+      '<div class="battlecard-metrics battlecard-metrics--primary">' +
+      metricHtml("RediSearch (motor)", m.redis_search_ms, "ms", "bc-metric--redis-hero") +
+      "</div>" +
+      '<p class="hint battlecard-hint-split">Fora do Redis: embedding da query no app e serialização HTTP entram no total abaixo.</p>' +
       '<div class="battlecard-metrics">' +
-      metricHtml("Total", m.total_ms, "ms") +
-      metricHtml("Embed", m.embedding_ms, "ms") +
-      metricHtml("Redis", m.redis_search_ms, "ms") +
-      metricHtml("RRF k", m.rrf_k, "") +
-      metricHtml("KNN K", m.hybrid_knn, "") +
-      metricHtml("FTS w", m.fts_weight, "") +
-      metricHtml("VSS w", m.vss_weight, "") +
+      metricHtml("Embed (query)", m.embedding_ms, "ms", "bc-metric--sub") +
+      metricHtml("Total API", m.total_ms, "ms", "bc-metric--sub") +
+      metricHtml("RRF k", m.rrf_k, "", "bc-metric--sub") +
+      metricHtml("KNN K", m.hybrid_knn, "", "bc-metric--sub") +
+      metricHtml("FTS w", m.fts_weight, "", "bc-metric--sub") +
+      metricHtml("VSS w", m.vss_weight, "", "bc-metric--sub") +
       "</div>" +
       fb +
       err;
   }
 
-  function metricHtml(lab, val, suf) {
+  function metricHtml(lab, val, suf, extraClass) {
     if (val === undefined || val === null) return "";
     const v = typeof val === "number" && val.toFixed ? (suf === "ms" ? val.toFixed(2) : val) : esc(String(val));
+    const cls = "bc-metric" + (extraClass ? " " + extraClass : "");
     return (
-      '<div class="bc-metric"><span class="bc-metric-val">' +
+      '<div class="' +
+      cls +
+      '"><span class="bc-metric-val">' +
       v +
       esc(suf) +
       '</span><span class="bc-metric-lab">' +
@@ -284,7 +290,11 @@
       }
       const j = await r.json();
       const n = j.results?.length ?? 0;
-      hint.textContent = "rede+API " + ms + " ms · " + n + " prato(s)";
+      const rs = j.meta && typeof j.meta.redis_search_ms === "number" ? j.meta.redis_search_ms : null;
+      hint.textContent =
+        rs != null
+          ? "Redis motor " + rs.toFixed(1) + " ms · RTT navegador " + ms + " ms · " + n + " prato(s)"
+          : "RTT navegador " + ms + " ms · " + n + " prato(s)";
       window.__lastSearchMeta = j.meta || {};
       window.__lastSearchMode = (j.meta && j.meta.mode) || "";
       renderBattlecard(j.meta, n);
@@ -620,12 +630,12 @@
     return (
       '<div class="obs-chips"><span class="obs-chip">' +
       esc(ml.title) +
-      "</span><span class=\"obs-chip\">total " +
-      esc(String(m.total_ms ?? "—")) +
+      "</span><span class=\"obs-chip obs-chip--accent\">motor Redis " +
+      esc(String(m.redis_search_ms ?? "—")) +
       " ms</span><span class=\"obs-chip\">embed " +
       esc(String(m.embedding_ms ?? "—")) +
-      " ms</span><span class=\"obs-chip\">redis " +
-      esc(String(m.redis_search_ms ?? "—")) +
+      " ms</span><span class=\"obs-chip\">total API " +
+      esc(String(m.total_ms ?? "—")) +
       " ms</span></div>"
     );
   }
