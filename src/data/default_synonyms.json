@@ -1,0 +1,32 @@
+{
+  "groups": [
+    {
+      "id": "pizza",
+      "terms": ["pizza", "piza", "pitza"]
+    },
+    {
+      "id": "burger",
+      "terms": ["hambúrguer", "hamburger", "burger", "x-burger", "xburger"]
+    },
+    {
+      "id": "açai",
+      "terms": ["açaí", "acai", "açai", "assai", "asai"]
+    },
+    {
+      "id": "yakisoba",
+      "terms": ["yakisoba", "yakissoba", "iaquisoba"]
+    },
+    {
+      "id": "pastel",
+      "terms": ["pastel", "pasteis", "pastéis"]
+    },
+    {
+      "id": "sushi",
+      "terms": ["sushi", "sashimi"]
+    },
+    {
+      "id": "strogonoff",
+      "terms": ["strogonoff", "stroganoff", "estrogonofe"]
+    }
+  ]
+}

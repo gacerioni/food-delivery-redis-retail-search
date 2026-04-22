@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header>
+    <h1>Redis hybrid search <span class="badge">FT.HYBRID · HASH · 8.4+</span></h1>
+    <span class="badge" id="conn-pill">API</span>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button type="button" class="active" data-tab="search">Busca</button>
+    <button type="button" data-tab="admin">Admin</button>
+    <button type="button" data-tab="obs">Observabilidade</button>
+  </nav>
+  <main>
+    <section id="tab-search">
+      <p class="pre-banner">
+        <strong>Primeira vez?</strong> O catálogo começa vazio. Em <strong>Admin</strong> → <strong>Rodar seed</strong> os pratos viram chaves <code>dish:*</code> indexadas (texto, geo, vetor). Sem seed, a busca volta vazia.
+      </p>
+      <div class="panel panel-hero">
+        <div class="row">
+          <div class="ac-box" style="flex:2;min-width:220px">
+            <label for="q">Consulta</label>
+            <input id="q" type="search" autocomplete="off" placeholder="Ex.: pizza napolitana, bowl japa, açaí 700ml" spellcheck="false" />
+            <ul id="ac" class="ac-list" role="listbox" aria-label="Sugestões"></ul>
+          </div>
+          <div>
+            <label for="category">Categoria</label>
+            <select id="category"><option value="">(todas)</option></select>
+          </div>
+          <div>
+            <label for="limit">Limite</label>
+            <input id="limit" type="number" min="1" max="100" value="20" />
+          </div>
+        </div>
+        <div class="quick-chips" aria-label="Atalhos de busca">
+          <button type="button" class="chip" data-q="pizza margherita">pizza margherita</button>
+          <button type="button" class="chip" data-q="smash burger duplo">smash duplo</button>
+          <button type="button" class="chip" data-q="açaí com granola e morango">açaí + granola</button>
+          <button type="button" class="chip" data-q="combo sushi salmão">combo japa</button>
+          <button type="button" class="chip" data-q="feijoada completa">feijoada</button>
+        </div>
+        <p class="hint" style="margin:0.65rem 0 0">Os chips preenchem a caixa e disparam busca. O dropdown abaixo vem do <strong>FT.SUGGET</strong> (autocomplete) — use ↑↓ Enter para escolher.</p>
+        <div class="grid cols-3" style="margin-top:0.85rem">
+          <div>
+            <label for="lat">Latitude (opcional)</label>
+            <input id="lat" type="text" placeholder="-23.55" inputmode="decimal" />
+          </div>
+          <div>
+            <label for="lon">Longitude (opcional)</label>
+            <input id="lon" type="text" placeholder="-46.63" inputmode="decimal" />
+          </div>
+          <div>
+            <label for="radius_km">Raio km</label>
+            <input id="radius_km" type="number" step="0.5" value="15" />
+          </div>
+        </div>
+        <div style="margin-top:0.85rem;display:flex;gap:0.65rem;align-items:center;flex-wrap:wrap">
+          <button type="button" class="primary" id="btn-search">Buscar</button>
+          <span class="hint" id="search-hint"></span>
+        </div>
+      </div>
+      <div id="search-meta" class="battlecard-wrap" style="display:none">
+        <div id="search-meta-inner" class="battlecard" role="status" aria-live="polite"></div>
+      </div>
+      <div id="results" class="results-grid" aria-label="Resultados"></div>
+    </section>
+
+    <section id="tab-admin" style="display:none">
+      <div class="panel">
+        <h2 style="margin:0 0 0.75rem;font-size:1rem;font-weight:650">Catálogo (seed)</h2>
+        <div class="grid cols-3">
+          <div>
+            <label for="seed-count">Quantidade</label>
+            <input id="seed-count" type="number" min="1" max="500000" value="500000" />
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <label style="display:flex;gap:0.4rem;align-items:center;cursor:pointer">
+              <input id="seed-replace" type="checkbox" /> Apagar pratos existentes antes
+            </label>
+          </div>
+          <div style="display:flex;align-items:flex-end">
+            <button type="button" class="primary" id="btn-seed">Rodar seed</button>
+          </div>
+        </div>
+        <p class="hint" id="seed-msg"></p>
+      </div>
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.75rem;flex-wrap:wrap">
+          <div>
+            <h2 style="margin:0;font-size:1rem;font-weight:650">Índice RediSearch</h2>
+            <p class="hint" style="margin:0.35rem 0 0;max-width:52rem">
+              <strong>Carregar sinônimos PT</strong> envia grupos do arquivo <code>default_synonyms.json</code> para o índice via <code>FT.SYNUPDATE</code> (ex.: <em>hamburguer</em> ↔ <em>hambúrguer</em>). Só muda <strong>recall da busca textual</strong>; não altera vetores nem geo. Rode após o índice existir (normalmente após seed ou rebuild).
+            </p>
+          </div>
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center">
+            <button type="button" class="ghost" id="btn-synonyms">Carregar sinônimos PT</button>
+            <button type="button" class="danger" id="btn-rebuild">Drop + recriar índice</button>
+          </div>
+        </div>
+        <p class="hint" id="admin-index-msg" style="margin-top:0.65rem"></p>
+      </div>
+      <div class="panel">
+        <h2 style="margin:0 0 0.75rem;font-size:1rem;font-weight:650">Pratos (amostra)</h2>
+        <div style="overflow:auto">
+          <table class="admin-table"><thead><tr><th>Nome</th><th>Loja</th><th>Cat.</th><th>Preço</th><th></th></tr></thead>
+            <tbody id="dish-tbody"></tbody>
+          </table>
+        </div>
+        <button type="button" class="ghost" id="btn-refresh-dishes" style="margin-top:0.5rem">Atualizar lista</button>
+      </div>
+    </section>
+
+    <section id="tab-obs" style="display:none">
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.65rem">
+          <h2 style="margin:0;font-size:1rem;font-weight:650">Painel Redis</h2>
+          <button type="button" class="primary" id="btn-obs-refresh">Atualizar</button>
+        </div>
+        <div id="obs-dashboard"></div>
+        <details class="obs-raw">
+          <summary>JSON bruto (debug)</summary>
+          <pre class="json" id="obs-pre"></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+  <script>
+(function () {
+  const $ = (s) => document.querySelector(s);
+  const tabs = document.querySelectorAll("nav.tabs button");
+  const sections = { search: $("#tab-search"), admin: $("#tab-admin"), obs: $("#tab-obs") };
+
+  const CAT_EMOJI = {
+    Pizza: "🍕",
+    Hambúrguer: "🍔",
+    Japonesa: "🍣",
+    Brasileira: "🍛",
+    Doces: "🍰",
+    Açaí: "🫐",
+    Bebidas: "🥤",
+    Padaria: "🥐",
+    Árabe: "🥙",
+    Italiana: "🍝",
+  };
+  const CAT_HEX = {
+    Pizza: "#e85d4c",
+    Hambúrguer: "#c17a3a",
+    Japonesa: "#4a90c2",
+    Brasileira: "#3d8c5a",
+    Doces: "#b565c8",
+    Açaí: "#6b4fc9",
+    Bebidas: "#3aa5c4",
+    Padaria: "#d4a054",
+    Árabe: "#c9a43a",
+    Italiana: "#c44d6a",
+  };
+
+  tabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tabs.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      Object.values(sections).forEach((el) => (el.style.display = "none"));
+      sections[btn.dataset.tab].style.display = "block";
+      if (btn.dataset.tab === "obs") loadObs();
+      if (btn.dataset.tab === "admin") loadDishes();
+    });
+  });
+
+  async function loadCategories() {
+    const r = await fetch("/api/categories");
+    const j = await r.json();
+    const sel = $("#category");
+    j.categories.forEach((c) => {
+      const o = document.createElement("option");
+      o.value = c;
+      o.textContent = c;
+      sel.appendChild(o);
+    });
+  }
+
+  function esc(s) {
+    return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function modeLabel(mode) {
+    if (mode === "hybrid") return { cls: "bc-mode--hybrid", title: "Hybrid", sub: "FT.HYBRID + VSIM + RRF" };
+    if (mode === "fts_geo_fallback")
+      return { cls: "bc-mode--fallback", title: "Fallback FTS+geo", sub: "Vetor indisponível nesta busca" };
+    if (mode === "fts_geo") return { cls: "bc-mode--fts", title: "FTS + geo", sub: "Sem perna vetorial (modo none ou sem vetor no índice)" };
+    return { cls: "bc-mode--fts", title: mode || "—", sub: "" };
+  }
+
+  function renderBattlecard(meta, resultCount) {
+    const m = meta || {};
+    const ml = modeLabel(m.mode);
+    const q = (m.query || "").trim() || "(sem texto — *)";
+    const cat = m.category_filter;
+    const geo = m.geo_active ? "Geo ativo" : "Geo livre";
+    const fb = m.fallback_reason ? `<div class="battlecard-foot"><strong>Motivo fallback:</strong> ${esc(m.fallback_reason)}</div>` : "";
+    const err = m.error ? `<div class="battlecard-foot msg-warn"><strong>Erro:</strong> ${esc(m.error)}</div>` : "";
+    $("#search-meta-inner").innerHTML =
+      '<div class="battlecard-head">' +
+      '<div><span class="bc-mode ' +
+      ml.cls +
+      '">' +
+      esc(ml.title) +
+      '</span> <span class="hint" style="margin:0">' +
+      esc(ml.sub) +
+      "</span></div>" +
+      '<div class="bc-query">“' +
+      esc(q) +
+      '” <span>· ' +
+      resultCount +
+      " resultado(s) · " +
+      esc(cat || "todas categorias") +
+      " · " +
+      geo +
+      "</span></div></div>" +
+      '<div class="battlecard-metrics">' +
+      metricHtml("Total", m.total_ms, "ms") +
+      metricHtml("Embed", m.embedding_ms, "ms") +
+      metricHtml("Redis", m.redis_search_ms, "ms") +
+      metricHtml("RRF k", m.rrf_k, "") +
+      metricHtml("KNN K", m.hybrid_knn, "") +
+      metricHtml("FTS w", m.fts_weight, "") +
+      metricHtml("VSS w", m.vss_weight, "") +
+      "</div>" +
+      fb +
+      err;
+  }
+
+  function metricHtml(lab, val, suf) {
+    if (val === undefined || val === null) return "";
+    const v = typeof val === "number" && val.toFixed ? (suf === "ms" ? val.toFixed(2) : val) : esc(String(val));
+    return (
+      '<div class="bc-metric"><span class="bc-metric-val">' +
+      v +
+      esc(suf) +
+      '</span><span class="bc-metric-lab">' +
+      esc(lab) +
+      "</span></div>"
+    );
+  }
+
+  document.querySelectorAll(".chip[data-q]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      $("#q").value = btn.getAttribute("data-q") || "";
+      $("#ac").classList.remove("show");
+      runSearch();
+    });
+  });
+
+  async function runSearch() {
+    const q = $("#q").value.trim();
+    const category = $("#category").value;
+    const limit = $("#limit").value;
+    const lat = $("#lat").value.trim();
+    const lon = $("#lon").value.trim();
+    const radius_km = $("#radius_km").value;
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (category) params.set("category", category);
+    if (limit) params.set("limit", limit);
+    if (lat) params.set("lat", lat);
+    if (lon) params.set("lon", lon);
+    if (radius_km) params.set("radius_km", radius_km);
+    const hint = $("#search-hint");
+    const btn = $("#btn-search");
+    hint.textContent = "buscando…";
+    btn.disabled = true;
+    const t0 = performance.now();
+    try {
+      const r = await fetch("/api/search?" + params.toString());
+      const ms = Math.round(performance.now() - t0);
+      if (!r.ok) {
+        const errBody = await r.text();
+        hint.textContent = "erro HTTP " + r.status + " em " + ms + " ms — " + (errBody.slice(0, 120) || r.statusText);
+        return;
+      }
+      const j = await r.json();
+      const n = j.results?.length ?? 0;
+      hint.textContent = "rede+API " + ms + " ms · " + n + " prato(s)";
+      window.__lastSearchMeta = j.meta || {};
+      window.__lastSearchMode = (j.meta && j.meta.mode) || "";
+      renderBattlecard(j.meta, n);
+      $("#search-meta").style.display = "block";
+      const box = $("#results");
+      box.innerHTML = "";
+      if (n === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty-card";
+        empty.innerHTML =
+          "<h3>Nenhum resultado</h3>" +
+          "<p class='hint'>Se o catálogo ainda não foi carregado, vá em <strong>Admin</strong> → <strong>Rodar seed</strong>. Depois tente os chips ou <em>pizza</em>, <em>açaí</em>, <em>hambúrguer</em>.</p>";
+        box.appendChild(empty);
+        return;
+      }
+      const mode = window.__lastSearchMode || "";
+      const modeTag =
+        mode === "hybrid"
+          ? "Hybrid · RRF"
+          : mode === "fts_geo_fallback"
+            ? "FTS + geo (fallback)"
+            : "FTS + geo";
+      (j.results || []).forEach((d) => {
+        const cat = d.category || "";
+        const em = CAT_EMOJI[cat] || "🍽️";
+        const col = CAT_HEX[cat] || "#5b8def";
+        const el = document.createElement("article");
+        el.className = "dish-card";
+        el.style.setProperty("--cat-color", col);
+        const score = d._score != null ? (typeof d._score === "number" ? d._score.toFixed(4) : d._score) : "—";
+        el.innerHTML =
+          '<div class="dish-card-inner">' +
+          '<div class="dish-card-top">' +
+          '<div class="dish-emoji" aria-hidden="true">' +
+          em +
+          "</div>" +
+          "<div><h3>" +
+          esc(d.item_name) +
+          "</h3>" +
+          '<div class="dish-tags"><span class="tag tag--cat">' +
+          esc(cat) +
+          '</span><span class="tag">' +
+          esc(modeTag) +
+          "</span></div>" +
+          '<div class="dish-meta-row"><span>' +
+          esc(d.store_name) +
+          '</span><span class="sep">·</span><span>SKU ' +
+          esc(d.item_id || "—") +
+          "</span></div>" +
+          '<p class="dish-desc">' +
+          esc(d.item_description) +
+          "</p></div></div></div>" +
+          '<div class="dish-foot"><span class="price-pill">R$ ' +
+          esc(d.price) +
+          '</span><span class="score-pill">score ' +
+          esc(String(score)) +
+          "</span></div>";
+        box.appendChild(el);
+      });
+    } catch (e) {
+      hint.textContent = "falha na rede ou no servidor — " + (e && e.message ? e.message : String(e));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  $("#btn-search").addEventListener("click", runSearch);
+
+  const ac = $("#ac");
+  const qInput = $("#q");
+  let acTimer = null;
+  let acItems = [];
+  let acIndex = -1;
+
+  function closeAc() {
+    ac.classList.remove("show");
+    ac.innerHTML = "";
+    acItems = [];
+    acIndex = -1;
+    qInput.classList.remove("has-suggestions");
+  }
+
+  function applyAcHighlight() {
+    Array.from(ac.children).forEach((li, i) => li.classList.toggle("active", i === acIndex));
+  }
+
+  function pickAc(i) {
+    if (i < 0 || i >= acItems.length) return;
+    qInput.value = acItems[i];
+    closeAc();
+    runSearch();
+  }
+
+  qInput.addEventListener("keydown", (e) => {
+    if (!ac.classList.contains("show") || !ac.children.length) {
+      if (e.key === "Enter") runSearch();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      acIndex = Math.min(acIndex + 1, acItems.length - 1);
+      applyAcHighlight();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      acIndex = Math.max(acIndex - 1, 0);
+      applyAcHighlight();
+    } else if (e.key === "Enter") {
+      if (acIndex >= 0) {
+        e.preventDefault();
+        pickAc(acIndex);
+      } else runSearch();
+    } else if (e.key === "Escape") {
+      closeAc();
+    }
+  });
+
+  qInput.addEventListener("input", () => {
+    clearTimeout(acTimer);
+    const v = qInput.value.trim();
+    if (v.length < 2) {
+      closeAc();
+      return;
+    }
+    acTimer = setTimeout(async () => {
+      try {
+        const r = await fetch("/api/autocomplete?q=" + encodeURIComponent(v) + "&limit=10");
+        const j = await r.json();
+        ac.innerHTML = "";
+        acItems = j.suggestions || [];
+        acItems.forEach((s, idx) => {
+          const li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.innerHTML = "<span>" + esc(s) + '</span><small>Sugestão · FT.SUGGET</small>';
+          li.addEventListener("mousedown", (ev) => {
+            ev.preventDefault();
+            acIndex = idx;
+            pickAc(idx);
+          });
+          li.addEventListener("mouseenter", () => {
+            acIndex = idx;
+            applyAcHighlight();
+          });
+          ac.appendChild(li);
+        });
+        ac.classList.toggle("show", ac.children.length > 0);
+        qInput.classList.toggle("has-suggestions", ac.children.length > 0);
+        acIndex = ac.children.length ? 0 : -1;
+        applyAcHighlight();
+      } catch (_) {
+        closeAc();
+      }
+    }, 200);
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".ac-box")) closeAc();
+  });
+
+  $("#btn-seed").addEventListener("click", async () => {
+    const count = parseInt($("#seed-count").value, 10) || 0;
+    const replace = $("#seed-replace").checked;
+    const el = $("#seed-msg");
+    el.textContent = "Gerando catálogo no Redis… isso pode demorar.";
+    el.className = "hint";
+    const r = await fetch("/admin/api/seed/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count, replace }),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      el.textContent = "Falha: " + (j.detail || JSON.stringify(j));
+      el.className = "hint msg-warn";
+      return;
+    }
+    el.className = "hint msg-ok";
+    el.innerHTML =
+      "<strong>Seed concluído.</strong> Criados: <strong>" +
+      (j.created ?? 0) +
+      "</strong> · Sinônimos FT não mudam; autocomplete preenchido: <strong>" +
+      (j.autocomplete_seeded ?? 0) +
+      "</strong> · modo embedding: <code>" +
+      esc(j.embedding_mode || "") +
+      "</code>.";
+  });
+
+  $("#btn-synonyms").addEventListener("click", async () => {
+    const el = $("#admin-index-msg");
+    el.textContent = "Aplicando FT.SYNUPDATE no índice…";
+    el.className = "hint";
+    const r = await fetch("/admin/api/synonyms/apply-default", { method: "POST" });
+    const j = await r.json();
+    if (j.ok) {
+      el.className = "hint msg-ok";
+      el.textContent =
+        "Sinônimos PT carregados: " +
+        (j.groups_applied ?? 0) +
+        " grupos no índice. A busca textual passa a considerar termos equivalentes (ex.: grafias de hambúrguer, açaí…).";
+    } else {
+      el.className = "hint msg-warn";
+      el.textContent = j.error || JSON.stringify(j);
+    }
+  });
+
+  $("#btn-rebuild").addEventListener("click", async () => {
+    if (!confirm("Recriar índice RediSearch? Requer ALLOW_INDEX_REBUILD=true no servidor.")) return;
+    const el = $("#admin-index-msg");
+    el.textContent = "Rebuild…";
+    const r = await fetch("/admin/api/index/rebuild", { method: "POST" });
+    const j = await r.json();
+    el.className = r.ok ? "hint msg-ok" : "hint msg-warn";
+    el.textContent = r.ok ? "Índice recriado com sucesso." : JSON.stringify(j);
+  });
+
+  async function loadDishes() {
+    const r = await fetch("/admin/api/dishes?limit=60");
+    const j = await r.json();
+    const tb = $("#dish-tbody");
+    tb.innerHTML = "";
+    (j.items || []).forEach((d) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" +
+        esc(d.item_name) +
+        "</td><td>" +
+        esc(d.store_name) +
+        "</td><td>" +
+        esc(d.category) +
+        "</td><td>" +
+        esc(d.price) +
+        "</td><td><button class='ghost' data-id='" +
+        esc(d.id) +
+        "'>excluir</button></td>";
+      tb.appendChild(tr);
+    });
+    tb.querySelectorAll("button[data-id]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-id");
+        await fetch("/admin/api/dishes/" + encodeURIComponent(id), { method: "DELETE" });
+        loadDishes();
+      });
+    });
+  }
+  $("#btn-refresh-dishes").addEventListener("click", loadDishes);
+
+  function fmtMemHuman(mem) {
+    if (!mem || typeof mem !== "object") return "—";
+    const u = mem.used_memory_human;
+    if (u) return typeof u === "string" ? u : String(u);
+    const b = mem.used_memory;
+    if (b == null) return "—";
+    const n = Number(b);
+    if (n > 1e9) return (n / 1e9).toFixed(2) + " GB";
+    if (n > 1e6) return (n / 1e6).toFixed(2) + " MB";
+    if (n > 1e3) return (n / 1e3).toFixed(2) + " KB";
+    return String(n);
+  }
+
+  function slowRows(entries) {
+    if (!Array.isArray(entries) || !entries.length) return "<p class='hint'>Sem entradas recentes no slowlog.</p>";
+    let html = '<table class="obs-slow"><thead><tr><th>µs</th><th>Comando</th></tr></thead><tbody>';
+    entries.slice(0, 8).forEach((e) => {
+      let dur = "—";
+      let cmd = "";
+      if (Array.isArray(e) && e.length >= 4) {
+        dur = String(e[2]);
+        const args = e[3];
+        if (Array.isArray(args)) {
+          cmd = args
+            .map((x) => (typeof x === "string" ? x : x && x.decode ? x.decode() : String(x)))
+            .join(" ");
+        } else cmd = String(args);
+      } else if (e && typeof e === "object") {
+        dur = String(e.duration ?? e.microseconds ?? "—");
+        cmd = String(e.command || e.args || JSON.stringify(e)).slice(0, 200);
+      } else cmd = String(e).slice(0, 200);
+      html += "<tr><td>" + esc(dur) + '</td><td class="cmd" title="' + esc(cmd) + '">' + esc(cmd.slice(0, 140)) + (cmd.length > 140 ? "…" : "") + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function renderObs(j) {
+    const merged = { ...j, last_client_search: window.__lastSearchMeta || null };
+    $("#obs-pre").textContent = JSON.stringify(merged, null, 2);
+    const mem = j.redis && j.redis.memory;
+    const slow = j.redis && j.redis.slowlog;
+    const idx = j.index || {};
+    const raw = idx.raw || {};
+    const numDocs = j.indexed_doc_count != null ? j.indexed_doc_count : raw.num_docs;
+    const dash = $("#obs-dashboard");
+    const cfg = j.config || {};
+    dash.innerHTML =
+      '<p class="obs-section-title">Visão geral</p><div class="obs-grid">' +
+      tile("Redis keys (DB)", j.redis && j.redis.dbsize) +
+      tile("Memória usada", fmtMemHuman(mem)) +
+      tile("Versão Redis", (j.redis && j.redis.version) || "—") +
+      tile("Docs no índice (~)", numDocs) +
+      tile("Índice", idx.exists ? "online" : "ausente") +
+      "</div>" +
+      '<p class="obs-section-title">Config híbrido (servidor)</p><div class="obs-chips">' +
+      chip("Índice: " + esc(cfg.index_name || "")) +
+      chip("Prefixo: " + esc(cfg.key_prefix || "")) +
+      chip("Embeddings: " + esc(cfg.embedding_write_mode || "")) +
+      chip("dim: " + esc(String(cfg.embedding_dim ?? ""))) +
+      chip("KNN K: " + esc(String(cfg.hybrid_knn ?? ""))) +
+      chip("RRF k: " + esc(String(cfg.rrf_k ?? ""))) +
+      "</div>" +
+      '<p class="obs-section-title">Última busca (cliente)</p>' +
+      lastSearchSummary(window.__lastSearchMeta) +
+      '<p class="obs-section-title">Slowlog (amostra)</p>' +
+      slowRows(slow) +
+      '<p class="hint">FT.INFO completo permanece no JSON abaixo (útil para suporte).</p>';
+  }
+
+  function tile(lab, val) {
+    return (
+      '<div class="obs-tile"><div class="obs-tile-val">' +
+      esc(val == null ? "—" : String(val)) +
+      '</div><div class="obs-tile-lab">' +
+      esc(lab) +
+      "</div></div>"
+    );
+  }
+
+  function chip(t) {
+    return '<span class="obs-chip">' + t + "</span>";
+  }
+
+  function lastSearchSummary(m) {
+    if (!m || !Object.keys(m).length) return "<p class='hint'>Nenhuma busca feita ainda nesta sessão.</p>";
+    const ml = modeLabel(m.mode);
+    return (
+      '<div class="obs-chips"><span class="obs-chip">' +
+      esc(ml.title) +
+      "</span><span class=\"obs-chip\">total " +
+      esc(String(m.total_ms ?? "—")) +
+      " ms</span><span class=\"obs-chip\">embed " +
+      esc(String(m.embedding_ms ?? "—")) +
+      " ms</span><span class=\"obs-chip\">redis " +
+      esc(String(m.redis_search_ms ?? "—")) +
+      " ms</span></div>"
+    );
+  }
+
+  async function loadObs() {
+    const r = await fetch("/api/observability");
+    const j = await r.json();
+    renderObs(j);
+  }
+  $("#btn-obs-refresh").addEventListener("click", loadObs);
+
+  loadCategories().catch(() => {});
+})();
+  </script>
+</body>
+</html>

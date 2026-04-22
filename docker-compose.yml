@@ -1,0 +1,14 @@
+# Pull-only: no build. Set DOCKER_IMAGE in .env (or export) to your Docker Hub tag.
+# Redis stays external — use host.docker.internal in REDIS_URL when Redis runs on the host.
+
+services:
+  food-search:
+    image: ${DOCKER_IMAGE:-gacerioni/gabs-sku-hybridsearch-redis:latest}
+    pull_policy: always
+    env_file:
+      - .env
+    ports:
+      - "${API_PORT:-8686}:${API_PORT:-8686}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
