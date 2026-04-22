@@ -1,45 +1,62 @@
-# Food delivery retail search — Redis hybrid demo
+# Redis hybrid search — food delivery / retail SKU demo
 
-MVP demo: **HASH** documents, **RediSearch** full-text + geo, optional **vectors**, **`FT.HYBRID` + RRF** on **Redis 8.4+** (8.6-compatible APIs). Includes a small **web UI** with **Search**, **Admin (catalog + index)**, and **Observability** (timings, `FT.INFO`, memory, slowlog).
+A **hands-on demo** of **iFood-style discovery** (dishes + merchants) on **one Redis** — not a toy script, not a second “search appliance”. The story we prove: **full-text + geo + vectors + native fusion** (`FT.HYBRID` + **RRF**) live beside your catalog data, with a small **web UI** and **admin-style** controls so buyers can *see* latency, index shape, and tuning trade-offs.
 
-See [`AGENT.md`](AGENT.md) for the full contract.
+**Redis is never bundled here.** You point the app at **Redis 8.4+** (Search + JSON-style workflows; hybrid APIs align with **8.6+** positioning). Bring your own cluster (Redis Cloud, VPC, ElastiCache, laptop).
 
-**Redis is never started by this repo.** Point the app at your cluster with **`REDIS_URL`** (for example Redis Cloud).
+---
+
+## What this demo actually does
+
+| Capability | What we built |
+|------------|----------------|
+| **Hybrid search** | `FT.HYBRID`: BM25-style **FTS** + **KNN** vectors fused with **RRF** in Redis — no hand-rolled score math in Python for the fusion step. |
+| **Geo** | Dish documents carry merchant location; queries can filter by **radius** around user lat/lon. |
+| **Typos & variants** | Small **synonym** set (`FT.SYNUPDATE`) applied **on API boot** — no “click to load synonyms” step. **Fuzzy `%token%` retry** only when strict text returns **zero** hits (keeps precision on the happy path). |
+| **Catalog at scale** | Seeded **HASH** dishes (`dish:{uuid}`) with pipelined ingest; contract in [`AGENT.md`](AGENT.md) targets **hundreds of thousands** of rows (lower `SEED_TARGET_DISHES` on a laptop). |
+| **“Real” strogonoff rows** | Faker rarely emits that word — we **always upsert 5 fixed strogonoff SKUs** on boot so synonym + search demos never look empty. |
+| **Operator UX** | **Search** tab, **Admin** (seed, CRUD, index tools), **Observability** (`FT.INFO`, memory, slowlog, per-request timing metadata). |
+| **Container-ready** | `Dockerfile`: **CPU-only PyTorch**, strips accidental **CUDA** wheels for lean **linux/amd64** + **linux/arm64** images; non-root user; healthcheck. |
+
+**What we deliberately did *not* build:** intent routers, chat/concierge, or a separate Elasticsearch/OpenSearch cluster. This repo is **pure search** on Redis so the conversation stays: *latency, simplicity, one bill, one ops model.*
+
+---
+
+## Who it is for
+
+- **Sales / solution architects** demoing Redis Search + hybrid to accounts comparing managed retail search or “always bolt Elasticsearch”.
+- **Engineers** who want a **working reference** for `FT.HYBRID`, HASH indexing, and a FastAPI façade with honest observability hooks.
+
+Full product contract (field rules, non-goals, env dictionary) lives in **[`AGENT.md`](AGENT.md)**.
+
+---
 
 ## Quick start (local Python)
 
-1. **Redis 8.4+** with Search / hybrid available at your **`REDIS_URL`** (you provision it; not part of this repo).
+1. **Redis 8.4+** with Search (and hybrid where your tier supports it) reachable via **`REDIS_URL`**.
 
-2. One command on a Mac (creates `.venv`, installs deps, copies `.env` if missing, runs the app):
+2. One command on a Mac (creates `.venv`, installs deps, copies `.env` if missing, runs the API):
 
    ```bash
    cd food-delivery-redis-retail-search
    ./start.sh
    ```
 
-   - **`./start.sh --reset`** — delete `.venv` and reinstall everything.
+   - **`./start.sh --reset`** — delete `.venv` and reinstall.
    - **`DEMO_PORT=9000 ./start.sh`** — override listen port (default from **`API_PORT`** in `.env`, else **8686**).
-   - If that port is busy (Errno 48), **`start.sh`** picks the **next free** port and says so. To fail instead: **`START_SH_STRICT_PORT=1 ./start.sh`**.
-   - Edit **`.env`**: set **`REDIS_URL`** (and TLS URL if your cloud requires it).
+   - If the port is busy, **`start.sh`** picks the **next free** port unless **`START_SH_STRICT_PORT=1`**.
 
-   Manual equivalent:
+3. Open **`http://127.0.0.1:<API_PORT>`** — if Redis is empty, use **Admin → Seed catalog**, then **Search**.
 
-   ```bash
-   python -m venv .venv && source .venv/bin/activate
-   pip install -e ".[dev]"
-   cp .env.example .env
-   uvicorn api.main:app --reload --host 0.0.0.0 --port 8686
-   ```
+First hybrid query may be slow while **sentence-transformers** loads the embedding model into memory.
 
-3. Open **http://localhost:8686** (or whatever **`API_PORT`** you set) — use **Seed catalog** in Admin if the DB is empty, then **Search**.
+**Synonym policy:** [`src/data/default_synonyms.json`](src/data/default_synonyms.json) stays **small** (high-traffic spelling variants only). Large synonym groups widen FTS; with hybrid + RRF that can surface unrelated hits. Prefer **fuzzy-on-miss** for rare typos; extend synonyms when data says so.
 
-On API boot the app runs **`FT.CREATE` (if needed)** and applies packaged **synonyms** (`FT.SYNUPDATE`) so you do not need Admin → “apply synonyms”. It also **upserts 5 fixed strogonoff dishes** (`dish:demo-strogonoff-01` … `05`) because the Faker catalog almost never emits that word — so searches like **estrogonofe** have real rows. First hybrid search may be slower while **sentence-transformers** loads into memory.
+---
 
-**Synonym policy:** [`src/data/default_synonyms.json`](src/data/default_synonyms.json) stays **small** — only frequent spelling variants for the same idea (e.g. pitza→pizza). Big or creative groups **widen FTS**; with **`FT.HYBRID` + RRF** that can float unrelated dishes (vector leg). Do not equate a **category** with a **dish** (we do not put “japonesa” in the sushi group). Prefer **fuzzy retry on miss** for rare typos; add synonym groups only when analytics say they help.
+## Docker
 
-## Run with Docker (app image only)
-
-Build and run the **API/UI container**; pass **`REDIS_URL`** (and any other env vars) from your environment or secrets store.
+### Build & run (single container)
 
 ```bash
 docker build -t food-search-demo .
@@ -48,9 +65,9 @@ docker run --rm -p 8686:8686 \
   food-search-demo
 ```
 
-The `Dockerfile` installs and runs **only** this application — it does not run Redis. It forces **CPU-only PyTorch** (`2.x+cpu`) and removes **`nvidia-*` / `triton` / `cuda-*`** wheels so multi-arch builds do not ship a useless ~1.5GB CUDA stack for this demo. The app runs as **non-root** (`uid 10001`) and exposes a **HEALTHCHECK** on `/api/observability`.
+### Multi-arch push (Docker Hub)
 
-**Docker Hub (buildx, amd64 + arm64)** — use two tags (the second is usually `:latest`, not a second version suffix):
+Use **two** `-t` flags (do not put `:latest` after a versioned image name in a single tag):
 
 ```bash
 docker buildx build --builder imusica-builder \
@@ -61,34 +78,53 @@ docker buildx build --builder imusica-builder \
   --push .
 ```
 
-(`-t …:0.0.1-gabs:latest` in one tag is invalid: Docker interprets the part after the **last** colon as the tag, so you would get tag `latest` on repo `…:0.0.1-gabs`, which is not what you want.)
+### Compose (pull from Hub — no `build`)
 
-**Compose (pull image from Docker Hub — no build):**
-
-Set `DOCKER_IMAGE` in `.env` (see `.env.example`), then:
+Set **`DOCKER_IMAGE`** in `.env` (see [`.env.example`](.env.example)), then:
 
 ```bash
 docker compose up -d
 ```
 
-`pull_policy: always` keeps the Hub tag fresh on each `up`. UI: `http://127.0.0.1:$API_PORT` (e.g. `8001` from your `.env`).
+`pull_policy: always` refreshes the image on each `up`. Map **`API_PORT`** in `.env` to the published port.
 
-If Redis runs **on the host** (`localhost:…` in `.env`), use `REDIS_URL=redis://host.docker.internal:<port>/0` in `.env` so the container can reach it.
+If Redis runs **on the Docker host** (`localhost` in `.env`), set:
 
-## Environment
+`REDIS_URL=redis://host.docker.internal:<port>/0`
 
-- **`REDIS_URL`**: required for real use (no default suitable for production). `.env.example` shows a placeholder.
-- **`EMBEDDING_WRITE_MODE`**: `all` | `sample` | `none` — `none` builds an index **without** a vector field and uses **FT.SEARCH** only (good for CI or low-RAM machines). `all` embeds every seeded dish (needs RAM + time for large `SEED_TARGET_DISHES`).
-- **`ALLOW_INDEX_REBUILD`**: must be `true` to call **Drop & recreate index** from the Admin UI.
-- **`FUZZY_FALLBACK_ON_MISS`** (default `true`): if a text query returns **zero** hits, the app retries once with RediSearch **`%token%`** fuzzy (≈1 edit) on tokens at least **`FUZZY_MIN_TOKEN_LEN`** long — extra latency **only on misses**, not on every query.
-- **`SEED_TARGET_DISHES`**: default in code is **500000** (the demo contract). For quick iteration on a laptop, lower the count in `.env` or in the Admin seed field; for repeatable “full catalog” cold starts, prefer baking a **Redis snapshot (`.rdb` / managed backup)** and restoring from object storage — see [`AGENT.md` §7.5](AGENT.md#75-warm-dataset-gerar-tudo-no-seed-vs-snapshot-rdb-ex-s3).
+so the container reaches the host (`extra_hosts` is already set in [`docker-compose.yml`](docker-compose.yml) for Linux).
+
+---
+
+## Environment (short)
+
+| Variable | Role |
+|----------|------|
+| **`REDIS_URL`** | Required for real runs. |
+| **`DOCKER_IMAGE`** | Compose-only: image to pull from Hub. |
+| **`EMBEDDING_WRITE_MODE`** | `all` \| `sample` \| `none` — `none` = index **without** vectors, **FT.SEARCH** only (CI / low RAM). |
+| **`FUZZY_FALLBACK_ON_MISS`** | Second pass with `%token%` fuzzy **only** when strict search returns no hits. |
+| **`SEED_TARGET_DISHES`** | Catalog size for seed (default in code is large; shrink for laptops). Warm snapshots vs full re-seed: see **[`AGENT.md` §7](AGENT.md)**. |
+| **`ALLOW_INDEX_REBUILD`** | Must be `true` to allow destructive index actions from Admin. |
+
+---
 
 ## Tests
 
-Point **`REDIS_URL`** at a reachable Redis 8.4+ instance, then:
+With **`REDIS_URL`** pointing at a reachable Redis 8.4+ instance:
 
 ```bash
 pytest -q
 ```
 
-Smoke tests skip if Redis is unreachable or lacks RediSearch.
+Smoke tests skip if Redis is down or lacks RediSearch.
+
+---
+
+## Repo layout (high level)
+
+- **`src/api/`** — FastAPI routes + Jinja UI wiring.
+- **`src/search/`** — Hybrid query builder, autocomplete, synonyms, embeddings.
+- **`src/data/`** — Redis client, HASH CRUD, `FT.CREATE` / index helpers.
+- **`src/seed/`** — Faker catalog + strogonoff fixtures.
+- **`templates/`**, **`static/`** — Demo UI.
