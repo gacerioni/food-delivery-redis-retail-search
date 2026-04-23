@@ -28,6 +28,7 @@ class DishDraft:
     price: str
     lat: float
     lon: float
+    retrieval_snippet: str
 
 
 def _faker_locale() -> Faker:
@@ -79,6 +80,28 @@ _HOOKS = [
     "Crocante por fora, drama por dentro.",
     "Se sobrar, vira café da manhã — mas não vai sobrar.",
 ]
+
+_RETRIEVAL_BY_CAT: dict[str, list[str]] = {
+    "Pizza": ["forno", "napolitana", "mozarela", "calabresa", "borda", "tradicional", "delivery"],
+    "Hambúrguer": ["smash", "artesanal", "cheddar", "brioche", "bacon", "duplo", "delivery"],
+    "Japonesa": ["sushi", "salmão", "temaki", "hot", "wasabi", "delivery", "combo"],
+    "Brasileira": ["feijoada", "pf", "caseiro", "strogonoff", "parmegiana", "arroz", "delivery"],
+    "Doces": ["brownie", "pudim", "sobremesa", "chocolate", "doce", "delivery"],
+    "Açaí": ["granola", "morango", "tropical", "bowl", "delivery", "natural"],
+    "Bebidas": ["suco", "natural", "refrigerante", "água", "gelada", "delivery"],
+    "Padaria": ["salgado", "forno", "coxinha", "esfiha", "pão", "delivery"],
+    "Árabe": ["esfiha", "kibe", "shawarma", "homus", "delivery"],
+    "Italiana": ["massa", "molho", "parmesão", "lasanha", "delivery"],
+}
+
+
+def _retrieval_snippet_for_category(cat: str, fk: Faker) -> str:
+    pool = list(_RETRIEVAL_BY_CAT.get(cat, ["delivery", "gourmet", "caseiro", "restaurante", "prato"]))
+    k = min(5, len(pool))
+    picks = random.sample(pool, k=k) if len(pool) >= k else pool
+    extra = fk.word().lower() if random.random() > 0.35 else ""
+    parts = list(picks) + ([extra] if extra else [])
+    return " ".join(dict.fromkeys(p for p in parts if p))
 
 
 def _store_name(fk: Faker) -> str:
@@ -194,6 +217,7 @@ def _draft_one(fk: Faker) -> DishDraft:
     lat = -23.5 + random.uniform(-0.35, 0.35)
     lon = -46.65 + random.uniform(-0.35, 0.35)
     price = f"{random.randint(12, 120)}.{random.randint(0, 99):02d}"
+    rs = _retrieval_snippet_for_category(cat, fk)
     return DishDraft(
         item_id=str(random.randint(10_000_000, 99_999_999)),
         store_id=str(random.randint(1000, 999_999)),
@@ -204,6 +228,7 @@ def _draft_one(fk: Faker) -> DishDraft:
         price=price,
         lat=lat,
         lon=lon,
+        retrieval_snippet=rs,
     )
 
 
@@ -225,6 +250,7 @@ def _draft_hash_mapping(d: DishDraft) -> dict[str, Any]:
         "item_name": d.item_name,
         "item_description": d.item_description,
         "store_name": d.store_name,
+        "retrieval_snippet": d.retrieval_snippet,
         "category": d.category,
         "price": d.price,
         "location": loc,
@@ -234,8 +260,14 @@ def _draft_hash_mapping(d: DishDraft) -> dict[str, Any]:
 def draft_to_hash_fields(d: DishDraft, dish_id: str, settings: Settings) -> dict[str, Any]:
     fields = dict(_draft_hash_mapping(d))
     if embedding_enabled(settings) and _should_embed(dish_id, settings):
-        text = dish_embedding_text(d.item_name, d.item_description, d.category, d.store_name)
-        blob, _ = embed_text_to_bytes(text, settings)
+        text = dish_embedding_text(
+            d.item_name,
+            d.item_description,
+            d.category,
+            d.store_name,
+            retrieval_snippet=d.retrieval_snippet,
+        )
+        blob, _ = embed_text_to_bytes(text, settings, role="passage")
         fields["embedding"] = blob
     return fields
 
@@ -249,7 +281,15 @@ def _flush_seed_chunk(
     texts: list[str] = []
     for _key, d, did, need_e in rows:
         if need_e:
-            texts.append(dish_embedding_text(d.item_name, d.item_description, d.category, d.store_name))
+            texts.append(
+                dish_embedding_text(
+                    d.item_name,
+                    d.item_description,
+                    d.category,
+                    d.store_name,
+                    retrieval_snippet=d.retrieval_snippet,
+                )
+            )
     blobs: list[bytes] = []
     if texts:
         blobs, _ = embed_many_to_bytes(texts, settings)
@@ -261,6 +301,10 @@ def _flush_seed_chunk(
             bi += 1
         pipe.hset(key, mapping=m)
 
+
+_STROGONOFF_SNIPPET = (
+    "estrogonofe strogonoff filé frango mignon arroz batata champignon creme molho caseiro delivery"
+)
 
 # Fixed demo SKUs so "strogonoff / estrogonofe" searches always have real rows (Faker rarely emits this word).
 _STROGONOFF_DEMOS: list[tuple[str, str, str, str, float, float, str, str]] = [
@@ -323,10 +367,16 @@ def upsert_strogonoff_demo_dishes(settings: Settings | None = None) -> int:
     blobs: list[bytes] = []
     if embedding_enabled(settings):
         texts = [
-            dish_embedding_text(r[0], r[1], r[6], r[2])
+            dish_embedding_text(
+                r[0],
+                r[1],
+                r[6],
+                r[2],
+                retrieval_snippet=_STROGONOFF_SNIPPET,
+            )
             for r in _STROGONOFF_DEMOS
         ]
-        blobs, _ = embed_many_to_bytes(texts, settings)
+        blobs, _ = embed_many_to_bytes(texts, settings, role="passage")
     n = 0
     for idx, row in enumerate(_STROGONOFF_DEMOS, start=1):
         item_name, desc, store_name, price, lat, lon, category, item_id = row
@@ -337,6 +387,7 @@ def upsert_strogonoff_demo_dishes(settings: Settings | None = None) -> int:
             "item_name": item_name,
             "item_description": desc,
             "store_name": store_name,
+            "retrieval_snippet": _STROGONOFF_SNIPPET,
             "category": category,
             "price": price,
             "location": f"{lon},{lat}",

@@ -62,6 +62,7 @@ End users look for **“hambúrguer artesanal”**, **“pizza margherita”**, 
 | `item_description` | Yes | TEXT (medium weight) | May be empty |
 | `store_id` | Yes | **No** | Use merchant name + geo for discovery; admin uses key or HASH |
 | `store_name` | Yes | TEXT (medium weight) | Merchant name |
+| `retrieval_snippet` | Yes | TEXT (low weight) | Extra PT keywords for BM25 + embedding (seed/admin); not shown in consumer UI by default |
 | `location` | Yes | GEO | Single field **`lon,lat`** string per RediSearch HASH GEO — **do not** duplicate `store_lat` / `store_long` in the HASH |
 | `category` | Yes | TAG | Food category |
 | `created_at` / `updated_at` | Yes | Not indexed unless you need sort | ISO-8601 strings OK in HASH values |
@@ -75,7 +76,7 @@ End users look for **“hambúrguer artesanal”**, **“pizza margherita”**, 
 
 **Embeddings:**
 
-- Field `embedding`: `VECTOR`, **FLOAT32**, **COSINE**, dimension from `EMBEDDING_DIM` env. Store the vector in the HASH as **raw bytes** (little-endian float32 sequence) compatible with the index’s declared dim — same pattern as JSON-backed vectors, but the source field is a HASH value.
+- Field `embedding`: `VECTOR`, **FLOAT32**, **COSINE**, dimension from `EMBEDDING_DIM` env; default index algorithm **`HNSW`** (`VECTOR_INDEX_TYPE`) with tunable `M`, `EF_CONSTRUCTION`, `INITIAL_CAP`. Store the vector in the HASH as **raw bytes** (little-endian float32 sequence) compatible with the index’s declared dim — same pattern as JSON-backed vectors, but the source field is a HASH value.
 - **Model choice:** prefer a **multilingual** embedder with strong **Portuguese** coverage (catalog text is mostly PT). Match `EMBEDDING_DIM` and distance metric to the model card (cosine is typical). Examples of families teams use: multilingual E5-style, BGE-M3-style, or **Qwen3 embedding** (or equivalent); pick one, pin the revision, and document RAM/latency tradeoffs for the demo tier.
 - **Text payload for `embed()` (document side):** one deterministic function, reused on create/update/re-embed:
   - **Template:** labeled sections or stable separators (e.g. dish name, description, category, merchant name) — never opaque ids.
@@ -115,20 +116,24 @@ Define all in `.env.example`. Suggested names:
 - `KEY_PREFIX` — e.g. `dish:`
 - `FTS_WEIGHT`, `VSS_WEIGHT` — metadata defaults (Redis RRF still uses ranks; keep for UI + logging)
 - `RRF_K` — default `10`
+- `RRF_WINDOW` — RRF window depth (default `40`; `0` = omit `WINDOW` in `COMBINE RRF`)
 - `HYBRID_KNN` — top-K for vector leg inside hybrid (tune per latency)
+- `HYBRID_KNN_EF_RUNTIME` — optional VSIM `EF_RUNTIME` (unset = 2-arg `KNN` only)
 - `DEFAULT_SEARCH_LIMIT` — e.g. `20`
 - `USER_GEO_DEFAULT_RADIUS_KM` — optional demo default
 
 **Embeddings**
 
-- `EMBEDDING_MODEL`
-- `EMBEDDING_DIM`
+- `EMBEDDING_MODEL` — default **`intfloat/multilingual-e5-large`** (1024-d; strong multilingual retrieval)
+- `EMBEDDING_DIM` — must match the model output (1024 for default)
+- `EMBEDDING_INSTRUCTION_MODE` — `e5` (prefix `query:` / `passage:`) or `none`
 - `EMBED_DEVICE` — `cpu` / `cuda` if applicable
+- `VECTOR_INDEX_TYPE` — `hnsw` | `flat`; `HNSW_M`, `HNSW_EF_CONSTRUCTION`, `HNSW_INITIAL_CAP` (`0` = auto from `SEED_TARGET_DISHES`)
 
 **Scale / ingest (500k)**
 
 - `SEED_TARGET_DISHES` — `500000`
-- `INGEST_PIPELINE_CHUNK_SIZE` — e.g. `500`–`2000` (`HSET` pipeline batches)
+- `INGEST_PIPELINE_CHUNK_SIZE` — e.g. `1000`–`2000` (`HSET` pipeline batches + batched embeddings per chunk)
 - `INGEST_MAX_PARALLEL` — optional, if using multiprocessing for **CPU-bound** prep only (not for opening 500k Redis connections)
 - `AUTOCOMPLETE_MAX_SUGGESTIONS` — cap suggestions stored (e.g. `100000` or derive from popularity)
 - `AUTOCOMPLETE_MIN_TITLE_LEN` — skip garbage

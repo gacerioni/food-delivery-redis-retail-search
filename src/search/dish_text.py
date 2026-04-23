@@ -10,12 +10,15 @@ def dish_embedding_text(
     item_description: str,
     category: str,
     store_name: str,
+    *,
+    retrieval_snippet: str = "",
 ) -> str:
     parts: list[str] = []
     n = (item_name or "").strip()
     d = (item_description or "").strip()
     c = (category or "").strip()
     s = (store_name or "").strip()
+    rs = (retrieval_snippet or "").strip()
     if n:
         parts.append(f"Prato: {n}")
     if d:
@@ -24,6 +27,8 @@ def dish_embedding_text(
         parts.append(f"Categoria: {c}")
     if s:
         parts.append(f"Restaurante: {s}")
+    if rs:
+        parts.append(f"Tags: {rs}")
     text = "\n".join(parts) if parts else "item"
     text = " ".join(text.split())
     if len(text) > MAX_CHARS:

@@ -15,6 +15,12 @@ def _use_vector(settings: Settings) -> bool:
     return settings.embedding_write_mode.lower() != "none"
 
 
+def _hnsw_initial_cap(settings: Settings) -> int:
+    if settings.hnsw_initial_cap > 0:
+        return int(settings.hnsw_initial_cap)
+    return max(100_000, int(settings.seed_target_dishes))
+
+
 def build_ft_create_args(settings: Settings) -> list[str | bytes]:
     """FT.CREATE … ON HASH … SCHEMA …"""
     args: list[str | bytes] = [
@@ -38,6 +44,10 @@ def build_ft_create_args(settings: Settings) -> list[str | bytes]:
         "TEXT",
         "WEIGHT",
         "2",
+        "retrieval_snippet",
+        "TEXT",
+        "WEIGHT",
+        "1",
         "category",
         "TAG",
         "price",
@@ -46,18 +56,40 @@ def build_ft_create_args(settings: Settings) -> list[str | bytes]:
         "GEO",
     ]
     if _use_vector(settings):
-        args += [
-            "embedding",
-            "VECTOR",
-            "FLAT",
-            "6",
-            "TYPE",
-            "FLOAT32",
-            "DIM",
-            str(settings.embedding_dim),
-            "DISTANCE_METRIC",
-            "COSINE",
-        ]
+        vtype = (settings.vector_index_type or "hnsw").lower()
+        if vtype == "flat":
+            args += [
+                "embedding",
+                "VECTOR",
+                "FLAT",
+                "6",
+                "TYPE",
+                "FLOAT32",
+                "DIM",
+                str(settings.embedding_dim),
+                "DISTANCE_METRIC",
+                "COSINE",
+            ]
+        else:
+            cap = _hnsw_initial_cap(settings)
+            args += [
+                "embedding",
+                "VECTOR",
+                "HNSW",
+                "12",
+                "TYPE",
+                "FLOAT32",
+                "DIM",
+                str(settings.embedding_dim),
+                "DISTANCE_METRIC",
+                "COSINE",
+                "M",
+                str(int(settings.hnsw_m)),
+                "EF_CONSTRUCTION",
+                str(int(settings.hnsw_ef_construction)),
+                "INITIAL_CAP",
+                str(cap),
+            ]
     return args
 
 
@@ -79,6 +111,7 @@ def ensure_index(settings: Settings | None = None) -> dict[str, Any]:
         "action": "created",
         "index": settings.index_name,
         "vector": _use_vector(settings),
+        "vector_index": (settings.vector_index_type or "hnsw").lower() if _use_vector(settings) else None,
     }
 
 

@@ -48,6 +48,7 @@ def test_ft_create_and_search_hash(redis_client):
             b"item_name": b"pizza margherita",
             b"item_description": b"mussarela e manjericao",
             b"store_name": b"Pizzaria Smoke",
+            b"retrieval_snippet": b"forno napolitana delivery",
             b"category": b"Pizza",
             b"price": b"49.90",
             b"location": b"-46.63,-23.55",

@@ -58,6 +58,27 @@ def get_dish(dish_id: str, settings: Settings | None = None) -> dict[str, Any] |
     return d
 
 
+def get_dishes_by_ids(dish_ids: list[str], settings: Settings | None = None) -> dict[str, dict[str, Any]]:
+    """Pipeline ``HGETALL`` for search hydration (one round-trip vs N)."""
+    settings = settings or get_settings()
+    if not dish_ids:
+        return {}
+    r = get_redis()
+    pipe = r.pipeline(transaction=False)
+    for did in dish_ids:
+        pipe.hgetall(dish_key(did, settings))
+    rows = pipe.execute()
+    out: dict[str, dict[str, Any]] = {}
+    for did, raw in zip(dish_ids, rows):
+        if not raw:
+            continue
+        d = _decode_hash(raw)
+        d["id"] = did
+        _enrich_lat_lon_from_location(d)
+        out[did] = d
+    return out
+
+
 def delete_dish(dish_id: str, settings: Settings | None = None) -> bool:
     r = get_redis()
     n = r.delete(dish_key(dish_id, settings))

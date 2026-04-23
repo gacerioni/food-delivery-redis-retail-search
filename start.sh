@@ -40,6 +40,12 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
+# pip needs a writable temp dir; macOS sometimes has TMPDIR/TMP pointing at missing paths.
+mkdir -p "${ROOT}/.tmp"
+export TMPDIR="${ROOT}/.tmp"
+export TMP="${ROOT}/.tmp"
+export TEMP="${ROOT}/.tmp"
+
 echo "[start] upgrading pip & installing package …"
 python -m pip install -q -U pip
 python -m pip install -q -e ".[dev]"

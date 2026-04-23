@@ -89,10 +89,15 @@ def api_observability() -> dict[str, Any]:
         "config": {
             "index_name": s.index_name,
             "key_prefix": s.key_prefix,
+            "embedding_model": s.embedding_model,
             "embedding_write_mode": s.embedding_write_mode,
             "embedding_dim": s.embedding_dim,
+            "embedding_instruction_mode": s.embedding_instruction_mode,
+            "vector_index_type": s.vector_index_type,
             "hybrid_knn": s.hybrid_knn,
+            "hybrid_knn_ef_runtime": s.hybrid_knn_ef_runtime,
             "rrf_k": s.rrf_k,
+            "rrf_window": s.rrf_window,
         },
     }
 
@@ -156,6 +161,10 @@ class DishCreate(BaseModel):
     price: str = "29.90"
     latitude: float = Field(default=-23.55, description="Degrees; stored only inside GEO `location`")
     longitude: float = Field(default=-46.63, description="Degrees; stored only inside GEO `location`")
+    retrieval_snippet: str | None = Field(
+        default=None,
+        description="Optional extra TEXT for BM25 + embedding; auto from category if empty.",
+    )
     item_id: str | None = None
     store_id: str | None = None
 
@@ -185,6 +194,9 @@ def admin_create_dish(body: DishCreate) -> dict[str, Any]:
     from search.embeddings import embed_text_to_bytes, embedding_enabled
 
     s = get_settings()
+    rs = (body.retrieval_snippet or "").strip()
+    if not rs:
+        rs = f"{body.category.lower()} delivery prato restaurante caseiro"
     fields: dict[str, Any] = {
         "item_id": body.item_id or "",
         "store_id": body.store_id or "",
@@ -194,6 +206,7 @@ def admin_create_dish(body: DishCreate) -> dict[str, Any]:
         "category": body.category,
         "price": body.price,
         "location": f"{body.longitude},{body.latitude}",
+        "retrieval_snippet": rs,
     }
     did = save_dish(fields, settings=s)
     if embedding_enabled(s):
@@ -202,8 +215,9 @@ def admin_create_dish(body: DishCreate) -> dict[str, Any]:
             body.item_description,
             body.category,
             body.store_name,
+            retrieval_snippet=rs,
         )
-        blob, _ = embed_text_to_bytes(text, s)
+        blob, _ = embed_text_to_bytes(text, s, role="passage")
         save_dish({"embedding": blob}, dish_id=did, settings=s)
     suggest_add(body.item_name, settings=s)
     return {"id": did, "ok": True}

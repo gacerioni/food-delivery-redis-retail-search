@@ -10,9 +10,53 @@ import redis
 from redis.exceptions import ResponseError
 
 from core.config import Settings, get_settings
-from data.dishes import get_dish
+from data.dishes import get_dishes_by_ids
 from data.redis_client import get_redis
 from search.embeddings import embed_text_to_bytes, embedding_enabled
+
+
+def _ft_hybrid_command(
+    settings: Settings,
+    fts: str,
+    qvec: bytes,
+    lim: int,
+    rk: int,
+) -> list[Any]:
+    parts: list[Any] = [
+        "FT.HYBRID",
+        settings.index_name,
+        "SEARCH",
+        fts,
+        "VSIM",
+        "@embedding",
+        "$query_vec",
+    ]
+    if settings.hybrid_knn_ef_runtime is not None and int(settings.hybrid_knn_ef_runtime) > 0:
+        parts += [
+            "KNN",
+            "4",
+            "K",
+            str(settings.hybrid_knn),
+            "EF_RUNTIME",
+            str(int(settings.hybrid_knn_ef_runtime)),
+        ]
+    else:
+        parts += ["KNN", "2", "K", str(settings.hybrid_knn)]
+    parts += ["COMBINE", "RRF"]
+    if int(settings.rrf_window) > 0:
+        parts += ["4", "WINDOW", str(int(settings.rrf_window)), "CONSTANT", str(rk)]
+    else:
+        parts += ["2", "CONSTANT", str(rk)]
+    parts += [
+        "PARAMS",
+        "2",
+        "query_vec",
+        qvec,
+        "LIMIT",
+        "0",
+        str(lim),
+    ]
+    return parts
 
 
 def _sanitize_fts_words(q: str) -> str:
@@ -194,6 +238,8 @@ def hybrid_search(
         "vss_weight": settings.vss_weight,
         "rrf_k": rk,
         "hybrid_knn": settings.hybrid_knn,
+        "rrf_window": settings.rrf_window,
+        "hybrid_knn_ef_runtime": settings.hybrid_knn_ef_runtime,
     }
 
     fts_strict = build_fts_clause(q, lat, lon, rad, category)
@@ -215,31 +261,7 @@ def hybrid_search(
 
     def _run_hybrid(fts: str) -> tuple[list[tuple[str, float]], float]:
         t0 = time.perf_counter()
-        raw = r.execute_command(
-            "FT.HYBRID",
-            settings.index_name,
-            "SEARCH",
-            fts,
-            "VSIM",
-            "@embedding",
-            "$query_vec",
-            "KNN",
-            "2",
-            "K",
-            str(settings.hybrid_knn),
-            "COMBINE",
-            "RRF",
-            "2",
-            "CONSTANT",
-            str(rk),
-            "PARAMS",
-            "2",
-            "query_vec",
-            qvec,
-            "LIMIT",
-            "0",
-            str(lim),
-        )
+        raw = r.execute_command(*_ft_hybrid_command(settings, fts, qvec, lim, rk))
         ms = round((time.perf_counter() - t0) * 1000, 2)
         return _parse_hybrid_rows(raw), ms
 
@@ -269,7 +291,7 @@ def hybrid_search(
         return results, meta
 
     embed_q = (q or "").strip() or "comida prato restaurante"
-    qvec, emb_ms = embed_text_to_bytes(embed_q, settings)
+    qvec, emb_ms = embed_text_to_bytes(embed_q, settings, role="query")
     meta["embedding_ms"] = emb_ms
 
     rows: list[tuple[str, float]]
@@ -329,13 +351,19 @@ def hybrid_search(
 
 
 def _hydrate_rows(rows: list[tuple[str, float]], settings: Settings) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
+    order: list[tuple[str, str, float]] = []
     for redis_key, score in rows:
         rk = redis_key.decode() if isinstance(redis_key, bytes) else str(redis_key)
         suffix = rk[len(settings.key_prefix) :] if rk.startswith(settings.key_prefix) else rk
-        doc = get_dish(suffix, settings)
-        if not doc:
+        order.append((rk, suffix, score))
+    unique_ids = list(dict.fromkeys(s for _, s, _ in order))
+    bulk = get_dishes_by_ids(unique_ids, settings)
+    out: list[dict[str, Any]] = []
+    for rk, suffix, score in order:
+        doc0 = bulk.get(suffix)
+        if not doc0:
             continue
+        doc = dict(doc0)
         doc["_score"] = score
         doc["_redis_key"] = rk
         out.append(doc)
